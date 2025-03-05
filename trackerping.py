@@ -1,5 +1,7 @@
 import asyncio
+import json
 import random
+import string
 import struct
 from argparse import ArgumentParser
 from typing import NamedTuple, Optional
@@ -10,6 +12,7 @@ from yarl import URL
 
 DEFAULT_TIMEOUT = 20
 SEMAPHORE = 64
+INFO_HASH = "\x00"*20
 
 
 class pingResult(NamedTuple):
@@ -51,6 +54,12 @@ async def ping_udp(url: URL, timeout: int) -> pingResult:
     return pingResult(url=str(url), success=True)
 
 
+def rand_peerid(ua: str) -> str:
+    return ua + "".join(
+        random.choices(string.ascii_letters+string.digits, k=20-len(ua))
+    )
+
+
 http_headers = {
     'User-Agent': 'qBittorrent/4.2.5',
     'Accept-Encoding': 'gzip',
@@ -59,8 +68,8 @@ http_headers = {
 
 
 http_params = {
-    'info_hash': "\x00"*20,
-    'peer_id': f"-qB4250-{random.randbytes(6).hex()}",
+    'info_hash': INFO_HASH,
+    'peer_id': rand_peerid("-qB4250-"),
     'port': 6881,
     'uploaded': 0,
     'downloaded': 0,
@@ -97,6 +106,46 @@ async def ping_http(url: URL, timeout: int) -> pingResult:
     return pingResult(url=str(url), success=True)
 
 
+ws_payload = {
+    'uploaded': 0,
+    'downloaded': 0,
+    'left': 0,
+    'event': 'stopped',
+    'action': 'announce',
+    'info_hash': INFO_HASH,
+    'peer_id': rand_peerid("-WW0108-"),
+}
+
+
+async def ping_ws(url: URL, timeout: int) -> pingResult:
+    try:
+        async with aiohttp.ClientSession(
+            raise_for_status=True, timeout=aiohttp.ClientTimeout(timeout)
+        ) as session, session.ws_connect(url) as ws:
+            await ws.send_json(ws_payload)
+            recv = await ws.receive(timeout)
+    except aiohttp.ClientConnectionError as e:
+        return pingResult(url=str(url), error=f"connection error: {e}")
+    except asyncio.TimeoutError:
+        return pingResult(url=str(url), error="connection timeout")
+    except aiohttp.ClientResponseError as e:
+        return pingResult(
+            url=str(url), error=f"invalid response: {e.status} {e.message}"
+        )
+
+    try:
+        resp = recv.json()
+        if resp['action'] != 'announce':
+            return pingResult(url=str(url), error=f"invalid response: {resp}")
+    except (json.JSONDecodeError, TypeError, KeyError, AssertionError):
+        return pingResult(
+            url=str(url),
+            error=f"invalid response: {str(recv.data[:16] if len(recv.data) > 16 else recv.data)}"
+        )
+
+    return pingResult(url=str(url), success=True)
+
+
 async def ping(url_str: str, timeout: int) -> pingResult:
     print(f"PING {url_str} ...")
     url = URL(url_str)
@@ -107,6 +156,8 @@ async def ping(url_str: str, timeout: int) -> pingResult:
         return await ping_udp(url, timeout)
     elif url.scheme in ('http', 'https'):
         return await ping_http(url, timeout)
+    elif url.scheme in ('ws', 'wss'):
+        return await ping_ws(url, timeout)
     else:
         return pingResult(url=url_str, error="invalid url")
 

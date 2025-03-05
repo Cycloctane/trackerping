@@ -12,6 +12,7 @@ Ping a single tracker url and print the result.
 ```bash
 python3 trackerping.py http://tracker.example.com/announce
 python3 trackerping.py --timeout=10 udp://tracker.example.com:80/announce
+python3 trackerping.py ws://webtorrent.example.com:80/announce
 ```
 
 ### Verify a trackerslist
