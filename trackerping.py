@@ -8,19 +8,18 @@ import aiohttp
 import anyio
 from yarl import URL
 
-DEFAULT_TIMEOUT = 10
-SEMAPHORE = 32
+DEFAULT_TIMEOUT = 20
+SEMAPHORE = 64
 
 
 class pingResult(NamedTuple):
     url: str
     success: bool = False
-    time: Optional[float] = None
     error: Optional[str] = None
 
     def format(self) -> str:
         if self.success:
-            return f"SUCCESS: time={self.time:.2f}s"
+            return "SUCCESS"
         else:
             return f"FAILED: {self.error}"
 
@@ -34,10 +33,8 @@ async def ping_udp(url: URL, timeout: int) -> pingResult:
             remote_host=url.host, remote_port=url.port
         ) as s:
             with anyio.fail_after(timeout):
-                start = anyio.current_time()
                 await s.send(struct.pack('!QII', 0x41727101980, 0, transaction_id))
                 recv = await s.receive()
-                end = anyio.current_time()
     except TimeoutError:
         return pingResult(url=str(url), error="connection timeout")
     except OSError as e:
@@ -51,7 +48,7 @@ async def ping_udp(url: URL, timeout: int) -> pingResult:
     if resp[0] != 0 or resp[1] != transaction_id:
         return pingResult(url=str(url), error="invalid response")
 
-    return pingResult(url=str(url), success=True, time=end-start)
+    return pingResult(url=str(url), success=True)
 
 
 http_headers = {
@@ -76,7 +73,6 @@ http_params = {
 
 async def ping_http(url: URL, timeout: int) -> pingResult:
     try:
-        start = anyio.current_time()
         async with aiohttp.request(
             "GET", url, params=http_params,
             headers=http_headers, skip_auto_headers=('Accept',),
@@ -84,7 +80,6 @@ async def ping_http(url: URL, timeout: int) -> pingResult:
             timeout=aiohttp.ClientTimeout(timeout)
         ) as resp:
             payload = await resp.read()
-        end = anyio.current_time()
     except aiohttp.ClientConnectionError as e:
         return pingResult(url=str(url), error=f"connection error: {e}")
     except asyncio.TimeoutError:
@@ -99,7 +94,7 @@ async def ping_http(url: URL, timeout: int) -> pingResult:
             url=str(url),
             error=f"invalid response: {str(payload[:16] if len(payload) > 16 else payload)}"
         )
-    return pingResult(url=str(url), success=True, time=end-start)
+    return pingResult(url=str(url), success=True)
 
 
 async def ping(url_str: str, timeout: int) -> pingResult:
@@ -110,7 +105,7 @@ async def ping(url_str: str, timeout: int) -> pingResult:
 
     if url.scheme == 'udp':
         return await ping_udp(url, timeout)
-    elif url.scheme == 'http' or url.scheme == 'https':
+    elif url.scheme in ('http', 'https'):
         return await ping_http(url, timeout)
     else:
         return pingResult(url=url_str, error="invalid url")
