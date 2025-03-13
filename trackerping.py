@@ -137,7 +137,7 @@ async def ping_ws(url: URL, timeout: int) -> pingResult:
         resp = recv.json()
         if resp['action'] != 'announce':
             return pingResult(url=str(url), error=f"invalid response: {resp}")
-    except (json.JSONDecodeError, TypeError, KeyError, AssertionError):
+    except (json.JSONDecodeError, TypeError, KeyError):
         return pingResult(
             url=str(url),
             error=f"invalid response: {str(recv.data[:16] if len(recv.data) > 16 else recv.data)}"
