@@ -70,12 +70,12 @@ http_headers = {
 http_params = {
     'info_hash': INFO_HASH,
     'peer_id': rand_peerid("-qB4250-"),
-    'port': 6881,
-    'uploaded': 0,
-    'downloaded': 0,
-    'left': 0,
-    'compact': 1,
-    'no_peer_id': 1,
+    'port': '6881',
+    'uploaded': '0',
+    'downloaded': '0',
+    'left': '0',
+    'compact': '1',
+    'no_peer_id': '1',
     'event': 'stopped',
 }
 
@@ -173,9 +173,11 @@ async def ping_list(urls: list[str], timeout: int) -> list[pingResult]:
     return results
 
 
-async def ping_single(url: str, timeout: int = DEFAULT_TIMEOUT) -> None:
+async def ping_single(url: str, timeout: int = DEFAULT_TIMEOUT) -> int:
     result = await ping(url, timeout)
-    print(result.format())
+    print("")
+    print("[+]" if result.success else "[!]", result.format())
+    return not result.success
 
 
 def write_file(file_path: str, data: list[str]) -> None:
@@ -186,21 +188,27 @@ def write_file(file_path: str, data: list[str]) -> None:
 
 async def ping_file(
     infile: str, outfile: Optional[str] = None, quiet: bool = False, timeout: int = DEFAULT_TIMEOUT
-) -> None:
-    if infile.startswith('http://') or infile.startswith('https://'):
-        print(f"[+] Fetching {infile} ...")
-        async with aiohttp.request('GET', infile, raise_for_status=True) as resp:
-            assert resp.content_type == 'text/plain'
-            urls = [i.strip() for i in (await resp.text()).split("\n") if i.strip()]
-    else:
-        with open(infile, 'r') as f:
-            urls = [i.strip() for i in f.readlines() if i.strip()]
+) -> int:
+    try:
+        if infile.startswith('http://') or infile.startswith('https://'):
+            print(f"Fetching {infile} ...")
+            async with aiohttp.request('GET', infile, raise_for_status=True) as resp:
+                assert resp.content_type == 'text/plain', \
+                    f"invalid content-type: {resp.content_type}, expect text/plain"
+                urls = [i.strip() for i in (await resp.text()).split("\n") if i.strip()]
+        else:
+            with open(infile, 'r') as f:
+                urls = [i.strip() for i in f.readlines() if i.strip()]
+    except (aiohttp.ClientError, OSError, AssertionError) as e:
+        print("[!] ERROR:", e)
+        return 2
     print(f"[+] Found {len(urls)} items\n")
 
     results = await ping_list(urls, timeout)
     succeeded = [i.url for i in results if i.success]
     if outfile is not None:
-        write_file(outfile, [i.url for i in results if i.success])
+        write_file(outfile, succeeded)
+    print("")
     for i in results:
         if not i.success:
             print(f"[!] {i.url}\n\t{i.format()}\n")
@@ -211,6 +219,7 @@ async def ping_file(
         f"{len(urls)} trackers total, {len(succeeded)} available "
         f"({len(succeeded)/len(urls)*100:.2f}%)"
     )
+    return not len(succeeded)
 
 
 if __name__ == '__main__':
@@ -227,6 +236,6 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     if args.is_list:
-        anyio.run(ping_file, args.target, args.outfile, args.quiet, args.timeout)
+        exit(asyncio.run(ping_file(args.target, args.outfile, args.quiet, args.timeout)))
     else:
-        anyio.run(ping_single, args.target, args.timeout)
+        exit(asyncio.run(ping_single(args.target, args.timeout)))
