@@ -5,19 +5,21 @@ import json
 import random
 import string
 import struct
-from argparse import ArgumentParser
 from typing import NamedTuple, Optional
 
 import aiohttp
 import anyio
 from yarl import URL
 
+__version__ = "1.0.0"
+__all__ = ["PingResult", "ping", "ping_list"]
+
 DEFAULT_TIMEOUT = 20
 SEMAPHORE = 64
 INFO_HASH = "\x00"*20
 
 
-class pingResult(NamedTuple):
+class PingResult(NamedTuple):
     url: str
     success: bool = False
     error: Optional[str] = None
@@ -29,7 +31,7 @@ class pingResult(NamedTuple):
             return f"FAILED: {self.error}"
 
 
-async def ping_udp(url: URL, timeout: int) -> pingResult:
+async def ping_udp(url: URL, timeout: int) -> PingResult:
     assert url.host and url.port
     transaction_id = random.getrandbits(32)
 
@@ -41,19 +43,19 @@ async def ping_udp(url: URL, timeout: int) -> pingResult:
                 await s.send(struct.pack('!QII', 0x41727101980, 0, transaction_id))
                 recv = await s.receive()
     except TimeoutError:
-        return pingResult(url=str(url), error="connection timeout")
+        return PingResult(url=str(url), error="connection timeout")
     except OSError as e:
-        return pingResult(url=str(url), error=f"connection error: {e}")
+        return PingResult(url=str(url), error=f"connection error: {e}")
 
     try:
         resp = struct.unpack('!IIQ', recv)
     except (struct.error):
-        return pingResult(url=str(url), error="invalid response")
+        return PingResult(url=str(url), error="invalid response")
 
     if resp[0] != 0 or resp[1] != transaction_id:
-        return pingResult(url=str(url), error="invalid response")
+        return PingResult(url=str(url), error="invalid response")
 
-    return pingResult(url=str(url), success=True)
+    return PingResult(url=str(url), success=True)
 
 
 def rand_peerid(ua: str) -> str:
@@ -82,7 +84,7 @@ http_params = {
 }
 
 
-async def ping_http(url: URL, timeout: int) -> pingResult:
+async def ping_http(url: URL, timeout: int) -> PingResult:
     try:
         async with aiohttp.request(
             "GET", url, params=http_params,
@@ -92,20 +94,20 @@ async def ping_http(url: URL, timeout: int) -> pingResult:
         ) as resp:
             payload = await resp.read()
     except aiohttp.ClientConnectionError as e:
-        return pingResult(url=str(url), error=f"connection error: {e}")
+        return PingResult(url=str(url), error=f"connection error: {e}")
     except asyncio.TimeoutError:
-        return pingResult(url=str(url), error="connection timeout")
+        return PingResult(url=str(url), error="connection timeout")
     except aiohttp.ClientResponseError as e:
-        return pingResult(
+        return PingResult(
             url=str(url), error=f"invalid response: {e.status} {e.message}"
         )
 
     if not payload or payload[0] != 100:
-        return pingResult(
+        return PingResult(
             url=str(url),
             error=f"invalid response: {str(payload[:16] if len(payload) > 16 else payload)}"
         )
-    return pingResult(url=str(url), success=True)
+    return PingResult(url=str(url), success=True)
 
 
 ws_payload = {
@@ -119,7 +121,7 @@ ws_payload = {
 }
 
 
-async def ping_ws(url: URL, timeout: int) -> pingResult:
+async def ping_ws(url: URL, timeout: int) -> PingResult:
     try:
         async with aiohttp.ClientSession(
             raise_for_status=True, timeout=aiohttp.ClientTimeout(timeout)
@@ -127,32 +129,32 @@ async def ping_ws(url: URL, timeout: int) -> pingResult:
             await ws.send_json(ws_payload)
             recv = await ws.receive(timeout)
     except aiohttp.ClientConnectionError as e:
-        return pingResult(url=str(url), error=f"connection error: {e}")
+        return PingResult(url=str(url), error=f"connection error: {e}")
     except asyncio.TimeoutError:
-        return pingResult(url=str(url), error="connection timeout")
+        return PingResult(url=str(url), error="connection timeout")
     except aiohttp.ClientResponseError as e:
-        return pingResult(
+        return PingResult(
             url=str(url), error=f"invalid response: {e.status} {e.message}"
         )
 
     try:
         resp = recv.json()
         if resp['action'] != 'announce':
-            return pingResult(url=str(url), error=f"invalid response: {resp}")
+            return PingResult(url=str(url), error=f"invalid response: {resp}")
     except (json.JSONDecodeError, TypeError, KeyError):
-        return pingResult(
+        return PingResult(
             url=str(url),
             error=f"invalid response: {str(recv.data[:16] if len(recv.data) > 16 else recv.data)}"
         )
 
-    return pingResult(url=str(url), success=True)
+    return PingResult(url=str(url), success=True)
 
 
-async def ping(url_str: str, timeout: int) -> pingResult:
+async def ping(url_str: str, timeout: int) -> PingResult:
     print(f"PING {url_str} ...")
     url = URL(url_str)
     if not url.host or not url.port or url.query_string:
-        return pingResult(url=url_str, error="invalid url")
+        return PingResult(url=url_str, error="invalid url")
 
     if url.scheme == 'udp':
         return await ping_udp(url, timeout)
@@ -161,10 +163,10 @@ async def ping(url_str: str, timeout: int) -> pingResult:
     elif url.scheme in ('ws', 'wss'):
         return await ping_ws(url, timeout)
     else:
-        return pingResult(url=url_str, error="invalid url")
+        return PingResult(url=url_str, error="invalid url")
 
 
-async def ping_list(urls: list[str], timeout: int) -> list[pingResult]:
+async def ping_list(urls: list[str], timeout: int) -> list[PingResult]:
     semaphore = asyncio.Semaphore(SEMAPHORE)
 
     async def wrapped_ping(url):
@@ -224,8 +226,9 @@ async def ping_file(
     return not len(succeeded)
 
 
-if __name__ == '__main__':
-    parser = ArgumentParser(prog="trackerping")
+def main():
+    from argparse import ArgumentParser
+    parser = ArgumentParser(description="Connectivity test tool for BitTorrent trackers")
     parser.add_argument('target', help="tracker url / trackerslist location")
     parser.add_argument('-l', dest='is_list', action='store_true',
                         help="treat target as a trackerslist")
@@ -238,6 +241,11 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     if args.is_list:
-        exit(asyncio.run(ping_file(args.target, args.outfile, args.quiet, args.timeout)))
+        return asyncio.run(ping_file(args.target, args.outfile, args.quiet, args.timeout))
     else:
-        exit(asyncio.run(ping_single(args.target, args.timeout)))
+        return asyncio.run(ping_single(args.target, args.timeout))
+
+
+if __name__ == '__main__':
+    import sys
+    sys.exit(main())
