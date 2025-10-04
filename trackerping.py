@@ -11,7 +11,7 @@ import aiohttp
 import anyio
 from yarl import URL
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 __all__ = ["PingResult", "ping", "ping_list"]
 
 DEFAULT_TIMEOUT = 20
