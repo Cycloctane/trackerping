@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+
 import asyncio
 import json
 import random
@@ -40,11 +41,11 @@ async def ping_udp(url: URL, timeout: int) -> PingResult:
         async with await anyio.create_connected_udp_socket(
             remote_host=url.host, remote_port=url.port
         ) as s:
+            start = anyio.current_time()
             with anyio.fail_after(timeout):
-                start = anyio.current_time()
                 await s.send(struct.pack('!QII', 0x41727101980, 0, transaction_id))
                 recv = await s.receive()
-                end = anyio.current_time()
+            end = anyio.current_time()
     except TimeoutError:
         return PingResult(url=str(url), error="connection timeout")
     except OSError as e:
@@ -52,7 +53,7 @@ async def ping_udp(url: URL, timeout: int) -> PingResult:
 
     try:
         resp = struct.unpack('!IIQ', recv)
-    except (struct.error):
+    except struct.error:
         return PingResult(url=str(url), error="invalid response")
 
     if resp[0] != 0 or resp[1] != transaction_id:
@@ -163,14 +164,15 @@ async def ping(url_str: str, timeout: int) -> PingResult:
     if not url.host or not url.port:
         return PingResult(url=url_str, error="invalid url")
 
-    if url.scheme == 'udp':
-        return await ping_udp(url, timeout)
-    elif url.scheme in ('http', 'https'):
-        return await ping_http(url, timeout)
-    elif url.scheme in ('ws', 'wss'):
-        return await ping_ws(url, timeout)
-    else:
-        return PingResult(url=url_str, error="invalid url")
+    match url.scheme:
+        case 'udp':
+            return await ping_udp(url, timeout)
+        case 'http' | 'https':
+            return await ping_http(url, timeout)
+        case 'ws' | 'wss':
+            return await ping_ws(url, timeout)
+        case _:
+            return PingResult(url=url_str, error="invalid url")
 
 
 async def ping_list(urls: list[str], timeout: int) -> list[PingResult]:
@@ -186,8 +188,7 @@ async def ping_list(urls: list[str], timeout: int) -> list[PingResult]:
 
 async def ping_single(url: str, timeout: int = DEFAULT_TIMEOUT) -> int:
     result = await ping(url, timeout)
-    print("")
-    print("[+]" if result.success else "[!]", result.format())
+    print("\n[+]" if result.success else "\n[!]", result.format())
     return not result.success
 
 
@@ -219,7 +220,7 @@ async def ping_file(
     succeeded = [i.url for i in results if i.success]
     if outfile is not None:
         write_file(outfile, succeeded)
-    print("")
+    print()
     for i in results:
         if not i.success:
             print(f"[!] {i.url}\n\t{i.format()}\n")
