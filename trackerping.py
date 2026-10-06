@@ -214,6 +214,9 @@ async def ping_file(
     except (aiohttp.ClientError, OSError, AssertionError) as e:
         print("[!] ERROR:", e)
         return 2
+    if len(urls) == 0:
+        print("[!] No valid URLs found")
+        return 2
     print(f"[+] Found {len(urls)} items\n")
 
     results = await ping_list(urls, timeout)
